@@ -74,6 +74,7 @@ class BaseIdea(models.Base):
         mm.pop('_ideas', [])
         return mm
 
+
     def addMeasure(self, name, value):
         measurementFields = {}
         values = {}
@@ -122,7 +123,10 @@ class MindMupManager(MindMupRootNode):
         if root is self:
             self._measurementsManager.clear()
         else:
-            for name, field in getattr(root.attr, 'measurements',[]):
+            meas = getattr(root.attr, 'measurements',None)
+            if not meas:
+                meas = []
+            for name, field in meas:
                 self._measurementsManager.add(name)
 
         for idea in root._ideas:
@@ -168,12 +172,12 @@ class MindMupManager(MindMupRootNode):
             reassignId = False
         mm = self.parse_to_mindmup(reassignId=reassignId)
         self.updateIdList(self, raiseOnDuplicate=True)
-        if mm['attr'].has_key('_measurements_config'):
-            mm['attr']['measurements-config'] =  mm['attr'].pop('_measurements_config')
         if self._linksManager:
             self.updateLinkList()
             mm =self.parse_to_mindmup(reassignId=False)
             print mm['links']
+        if mm['attr'].has_key('_measurements_config'):
+            mm['attr']['measurements-config'] =  mm['attr'].pop('_measurements_config')
         return mm
 
     @classmethod
@@ -205,6 +209,10 @@ class MindMupManager(MindMupRootNode):
         self.populate(**fields)
         print self.links
         self.updateMeasurements(self)
+        self.updateIdList(self)
+        for link in self.links:
+            self._linksManager[self.idList[link.ideaIdFrom], self.idList[link.ideaIdTo]] = link.attr.style.to_struct()
+
 
 
 

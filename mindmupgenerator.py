@@ -67,6 +67,11 @@ class BaseIdea(models.Base):
             mm['ideas'] = {}
             for rank, idea in enumerate(self._ideas, start=1):
                 mm['ideas'][str(rank)] =  idea.parse_to_mindmup(reassignId)
+        else:
+            try:
+                self.attr.collapsed = False
+            except:
+                pass
         return mm
 
     def basefields_to_struct(self):
@@ -74,6 +79,14 @@ class BaseIdea(models.Base):
         mm.pop('_ideas', [])
         return mm
 
+    def addAttachment(self, text, append=True):
+        if not getattr(self, 'attr'):
+            self.attr = Attributes()
+        if self.attr.attachment:
+            text = self.attr.attachment.to_struct()['content'] + " <hr> " + text
+        else:
+            self.attr.attachment = Attachment()
+        self.attr.attachment.populate(contentType= "text/html", content= text)
 
     def addMeasure(self, name, value):
         measurementFields = {}

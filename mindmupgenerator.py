@@ -1,3 +1,4 @@
+from __future__ import print_function
 import json
 import sys
 import itertools
@@ -55,7 +56,16 @@ class BaseIdea(models.Base):
     _ideas = fields.ListField(['BaseIdea']) #lazy loading for circular references, see doc
 
     def __str__(self):
-        return "[%d] %s " % (self.id, self.title)
+        return "[%s] %s " % (self.id if hasattr(self,'id') else '?', self.title)
+
+    @classmethod
+    def walkSubTree(cls, root, level=0):
+        depth = level + 1
+        subIdeas = root._ideas
+        yield root, subIdeas, depth
+        for nextIdea in subIdeas:
+            for x in cls.walkSubTree(nextIdea, level=depth):
+                yield x
 
     def parse_to_mindmup(self, reassignId = False):
         if reassignId:
@@ -103,7 +113,9 @@ class BaseIdea(models.Base):
         self.attr.measurements = MeasurementFactory(**measurementFields)(**values)
 
     def setCollapse(self, state):
-        self.get('attr', Attributes()).populate(collapsed = state)
+        if not getattr(self, 'attr'):
+            self.attr = Attributes()
+        self.attr.populate(collapsed = state)
 
 class MindMupRootNode(BaseIdea):
     attr = fields.EmbeddedField(rootAttributes)
@@ -115,7 +127,6 @@ class MindMupRootNode(BaseIdea):
 class MindMupManager(MindMupRootNode):
     def __init__(self,  *args, **kwargs):
         self.idList = {}
-        self._measurementsManager = set()
         self._linksManager = dict()
         updatedKwargs = dict(MindMupRootNode.defaults)
         updatedKwargs.update(kwargs)
@@ -132,63 +143,55 @@ class MindMupManager(MindMupRootNode):
         elif action == "remove":
             self._linksManager.pop((idea1, idea2), None)
 
-    def updateMeasurements(self, root):
-        if root is self:
-            self._measurementsManager.clear()
-        else:
-            meas = getattr(root.attr, 'measurements',None)
+    def updateMeasurements(self):
+        measurements = set()
+        for idea, subIdeas, depth in self.walkSubTree(self):
+            meas = getattr(idea.attr, 'measurements',None)
             if not meas:
                 meas = []
             for name, field in meas:
-                self._measurementsManager.add(name)
+                measurements.add(name)
 
-        for idea in root._ideas:
-            self.updateMeasurements(idea)
+        if not getattr(self, 'attr'):
+            self.attr = rootAttributes()
+        for m in measurements:
+            self.attr._measurements_config.append(m)
 
-        if root is self:
-            root.attr = rootAttributes()
-            for m in self._measurementsManager:
-                root.attr._measurements_config.append(m)
+    def updateIdList(self, raiseOnDuplicate = True):
+        self.idList.clear()
+        for idea, subIdeas, depth in self.walkSubTree(self):
+            curId = idea.id
+            while curId in self.idList:
+                if raiseOnDuplicate:
+                    raise Exception(ValueError, "DuplicateId %s" %curId)
+                curId = '_'+ str(curId)
+            self.idList[curId] = idea
 
-    def updateIdList(self, root, raiseOnDuplicate = True):
-        if root is self:
-            self.idList.clear()
-        curId = root.id
-        while curId in self.idList:
-            if raiseOnDuplicate:
-                raise Exception(ValueError, "DuplicateId %s" %curId)
-            curId = '_'+ str(curId)
-        self.idList[curId] = root
-        for idea in root._ideas:
-            self.updateIdList(idea)
 
-    def reorderIds(self, root, clear = False):
-        if clear:
-            self.idList.clear()
-        root.id = len(self.idList) + 1
-        self.idList[root.id] = root
-        for idea in root._ideas:
-            self.reorderIds(idea)
+    def reorderIds(self):
+        self.idList.clear()
+        for root, subIdeas, depth in self.walkSubTree(self):
+            root.id = len(self.idList) + 1
+            self.idList[root.id] = root
 
     def updateLinkList(self):
-        self.updateIdList(self, raiseOnDuplicate=True)
+        self.updateIdList(raiseOnDuplicate=True)
         self.links = []
         for (idea1, idea2), style in self._linksManager.iteritems():
             styleField = Style(**style)
-            self.links.append(Link(ideaIdFrom = idea1.id, ideaIdTo = idea2.id)) # attr= {'style': styleField}))
+            self.links.append(Link(ideaIdFrom = idea1.id, ideaIdTo = idea2.id)) #, attr= {'style': styleField}))
 
     def to_mindmup(self, autoIncrement = True):
-        self.updateMeasurements(self)
+        self.updateMeasurements()
         if autoIncrement:
             reassignId = itertools.count(start=1)
         else:
             reassignId = False
         mm = self.parse_to_mindmup(reassignId=reassignId)
-        self.updateIdList(self, raiseOnDuplicate=True)
+        self.updateIdList(raiseOnDuplicate=True)
         if self._linksManager:
             self.updateLinkList()
             mm =self.parse_to_mindmup(reassignId=False)
-            print mm['links']
         if mm['attr'].has_key('_measurements_config'):
             mm['attr']['measurements-config'] =  mm['attr'].pop('_measurements_config')
         return mm
@@ -218,9 +221,7 @@ class MindMupManager(MindMupRootNode):
         baseMap = self._parseNodes(mm_dict)
         fields = {k: getattr(baseMap,k) for k, v in baseMap.iterate_over_fields()}
         fields.pop('attr',None)
-        print self.links
         self.populate(**fields)
-        print self.links
         self.updateMeasurements(self)
         self.updateIdList(self)
         for link in self.links:
@@ -243,9 +244,9 @@ if __name__ == '__main__':
 
     from pprint import  pprint
     pprint(map._linksManager)
-    print "converted map"
+    print("converted map")
     pprint(map.to_mindmup())
-    print 'idlist', map.idList
+    print('idlist', map.idList)
 
     with open('/tmp/test.mup', 'wb') as f:
         json.dump(map.to_mindmup(), f, indent=1)

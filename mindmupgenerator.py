@@ -257,3 +257,83 @@ if __name__ == '__main__':
     pprint(map2.to_mindmup())
 
 
+def dictToHtmlTable(aDict, caption=""):
+    """
+    Print a dict as an html table that can be used as an attachment
+    Args:
+        aDict:
+        caption:
+
+    Returns:
+        html text
+
+    """
+    html = "<table><caption><b>%s</b></caption>" %caption
+    for key, value in aDict.iteritems():
+        html = "%s<tr> <thalign='left'>%s </th><td>%s</td> \n " % (html, key, value)
+    html = "%s\n</table>" % html
+    return html
+
+
+class sharedNodeManager(object):
+    """
+    Class (dict-like) for managing a node and its children (indexed by user-defined keys). T
+    he root node will be created if necessary.
+    """
+    def __init__(self, rootNode = None, rootKey = "root", defaultNodeConstructor = None, **kwargs):
+        if defaultNodeConstructor is not None:
+            self.defaultNodeConstructor = defaultNodeConstructor
+        if rootNode is None:
+            rootNode = BaseIdea(**self.defaultNodeConstructor(rootKey))
+        rootNode.populate(**kwargs)
+        self.rootNode = rootNode
+        self.index = {}  # title, node
+        if not rootKey is None:
+            self.setNode(rootKey, rootNode)
+
+    def getRootNode(self):
+        return self.rootNode
+
+    def defaultNodeConstructor(self, key):
+        return {'title': str(key),
+                'collapsed': True}
+
+    def getNode(self, key):
+        """
+        Gets the node corresponding to key. If it doesn't exist, it is created and appended to the root node
+        Args:
+            key:
+
+        Returns: node
+
+        """
+        node = self.index.get(key)
+        if not node:
+            node = BaseIdea(**self.defaultNodeConstructor(key))
+            self.index[key] = node
+            self.rootNode._ideas.append(node)
+        return node
+
+    def popNode(self, key, useDefault = False):
+        """
+        removes the node corresponding to key
+        Args:
+            key:
+            useDefault:
+
+        Returns:
+
+        """
+        node = self.index.pop(key, None)
+        if node and node is not self.rootNode:
+            self.getRootNode()._ideas.remove(node)
+        elif useDefault:
+            node = BaseIdea(**self.defaultNodeConstructor(key))
+        return node
+
+    def setNode(self, key, node):
+        self.index[key] = node
+
+    def initializeKeys(self, keysIterable):
+        for k in keysIterable:
+            self.index[k] = None

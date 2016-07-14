@@ -12,6 +12,7 @@ class Attachment(models.Base):
 class Style(models.Base):
     color = fields.StringField()
     lineStyle = fields.StringField()
+    background = fields.StringField()
 
 class Attributes(models.Base):
     style = fields.EmbeddedField(Style)
@@ -36,6 +37,13 @@ class Link(models.Base):
         updatedKwargs = dict(self.defaults)
         updatedKwargs.update(kwargs)
         super(Link,self).__init__(**updatedKwargs)
+
+    def setColor(self, color):
+        self.populate(**{'attr':{'style':{'color': color}}})
+
+    def setLineStyle(self, style):
+        #style in dashed ,
+        self.populate(**{'attr':{'style':{'lineStyle': style}}})
 
 
 def MeasurementFactory(**fields):
@@ -70,18 +78,13 @@ class BaseIdea(models.Base):
     def parse_to_mindmup(self, reassignId = False):
         if reassignId:
             self.id = next(reassignId)
-
+        if len(self._ideas) == 0:
+            self.setCollapse(False)
         mm = self.basefields_to_struct()
-
         if len(self._ideas):
             mm['ideas'] = {}
             for rank, idea in enumerate(self._ideas, start=1):
-                mm['ideas'][str(rank)] =  idea.parse_to_mindmup(reassignId)
-        else:
-            try:
-                self.attr.collapsed = False
-            except:
-                pass
+                mm['ideas'][str(rank)] = idea.parse_to_mindmup(reassignId)
         return mm
 
     def basefields_to_struct(self):
@@ -93,7 +96,8 @@ class BaseIdea(models.Base):
         if not getattr(self, 'attr'):
             self.attr = Attributes()
         if self.attr.attachment:
-            text = self.attr.attachment.to_struct()['content'] + " <hr> " + text
+            if append:
+                text = self.attr.attachment.to_struct()['content'] + " <hr> " + text
         else:
             self.attr.attachment = Attachment()
         self.attr.attachment.populate(contentType= "text/html", content= text)
@@ -115,7 +119,15 @@ class BaseIdea(models.Base):
     def setCollapse(self, state):
         if not getattr(self, 'attr'):
             self.attr = Attributes()
-        self.attr.populate(collapsed = state)
+        self.attr.collapsed = state
+
+    def setColor(self, color):
+        if not getattr(self, 'attr'):
+            self.attr = Attributes()
+        if not getattr(self.attr, 'style'):
+            self.attr.style = Style()
+        self.attr.style.background = color
+
 
 class MindMupRootNode(BaseIdea):
     attr = fields.EmbeddedField(rootAttributes)
@@ -257,7 +269,7 @@ if __name__ == '__main__':
     pprint(map2.to_mindmup())
 
 
-def dictToHtmlTable(aDict, caption=""):
+def dictToHtmlTable(aDict, caption="", tableProps = "border='1px solid black' 	border-collapse='collapse'"):
     """
     Print a dict as an html table that can be used as an attachment
     Args:
@@ -268,9 +280,26 @@ def dictToHtmlTable(aDict, caption=""):
         html text
 
     """
-    html = "<table><caption><b>%s</b></caption>" %caption
+    html = "<table %s >" \
+           "<caption><b>%s</b>" \
+           "</caption>" %(tableProps, caption)
     for key, value in aDict.iteritems():
-        html = "%s<tr> <thalign='left'>%s </th><td>%s</td> \n " % (html, key, value)
+        if isinstance(value,dict):
+            cell = dictToHtmlTable(value, tableProps="")
+        elif isinstance(value, list):
+            cell = "["
+            for item in value:
+                if isinstance(item, dict):
+                    cell += dictToHtmlTable(item, tableProps="")
+                else:
+                    cell +=  str(item)
+                cell += r',<br\>'
+            cell += ']'
+        else:
+            cell = value
+        html = "%s\n" \
+               "<tr> <td><b>%s</b> </td>" \
+               "<td>%s</td>" % (html, key, cell)
     html = "%s\n</table>" % html
     return html
 

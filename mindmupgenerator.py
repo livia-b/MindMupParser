@@ -269,7 +269,8 @@ if __name__ == '__main__':
     pprint(map2.to_mindmup())
 
 
-def dictToHtmlTable(aDict, caption="", tableProps = "border='1px solid black' 	border-collapse='collapse'"):
+def dictToHtmlTable(aDict, caption="", tableProps = "border='1px solid black' 	border-collapse='collapse'",
+                    maxElements = 3, maxDepth=5 , actionOnValue = None):
     """
     Print a dict as an html table that can be used as an attachment
     Args:
@@ -283,17 +284,24 @@ def dictToHtmlTable(aDict, caption="", tableProps = "border='1px solid black' 	b
     html = "<table %s >" \
            "<caption><b>%s</b>" \
            "</caption>" %(tableProps, caption)
+    maxDepth -= 1
+    if maxDepth <0:
+        return ""
     for key, value in aDict.iteritems():
+        if actionOnValue:
+            value = actionOnValue(value)
         if isinstance(value,dict):
-            cell = dictToHtmlTable(value, tableProps="")
+            cell = dictToHtmlTable(value, tableProps="", maxElements= maxElements, maxDepth = maxDepth)
         elif isinstance(value, list):
             cell = "["
-            for item in value:
+            for item in value[:maxElements]:
                 if isinstance(item, dict):
-                    cell += dictToHtmlTable(item, tableProps="")
+                    cell += dictToHtmlTable(item, tableProps="", maxElements= maxElements, maxDepth = maxDepth)
                 else:
-                    cell +=  str(item)
-                cell += r',<br\>'
+                    cell += str(item)
+                cell += ' '
+            if len(value) > maxElements:
+                cell += ' (... other %s elements)' %(len(value) - maxElements)
             cell += ']'
         else:
             cell = value

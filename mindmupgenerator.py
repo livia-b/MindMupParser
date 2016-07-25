@@ -57,11 +57,108 @@ class rootAttributes(models.Base):
     _measurements_config = fields.ListField([str])
 
 
+
+import jsonmodels.collections
+class KeyIndexedModelCollection(jsonmodels.collections.ModelCollection):
+
+    """`KeyIndexedModelCollection` is list which validates stored values.
+
+    Validation is made with use of field passed to `__init__` at each point,
+    when new value is assigned.
+
+    """
+
+    def _defaultKeyGenerator(self, value):
+        key = len(self._index)
+        while key in self:
+            key += 1
+        return key
+
+    def __init__(self, field, defaultKeyGenerator=None):
+        super(KeyIndexedModelCollection, self).__init__(field)
+        if defaultKeyGenerator is None:
+            defaultKeyGenerator = self._defaultKeyGenerator
+        self._keyGen = defaultKeyGenerator
+        self._index = dict()
+        self._reverseIndex = dict()
+
+    def append(self, value, _key = None):
+        super(KeyIndexedModelCollection, self).append(value)
+        if _key is None:
+            _key = self._keyGen(value)
+        self._index[_key] = value
+        self._reverseIndex[len(self)-1] = _key
+        print("index %s now has %d keys: %s %s" %(
+            id(self._index), len(self._index), self._index.values()[0], self._index.values()[-1]))
+
+    def pop(self, index=None):
+        if index is None:
+            index = len(self) -1
+        self._index.pop(self._reverseIndex.pop(index))
+
+        return super(KeyIndexedModelCollection, self).pop(index)
+
+    def __setitem__(self, key, value, _key=None):
+        super(KeyIndexedModelCollection, self).__setitem__(key, value)
+        if _key is None:
+            _key = self._keyGen(value)
+        self._index[_key] = value
+        self._reverseIndex[key] = _key
+        print("index %s now has %d keys: %s %s" %(
+            id(self._index), len(self._index), self._index.values()[0], self._index.values()[-1]))
+
+    def __delitem__(self, key):
+        _key = self._reverseIndex.pop(key)
+
+        if not(self.__getitem__(key)) == self._index.get(_key):
+            self._syncReverseIndex()
+            _key = self._reverseIndex.pop(key)
+
+        super(KeyIndexedModelCollection, self).__delitem__(key)
+        self._index.pop(_key)
+        print("index %s now has %d keys: %s %s" %(
+            id(self._index), len(self._index), self._index.values()[0], self._index.values()[-1]))
+
+    def _syncReverseIndex(self):
+        self._reverseIndex.clear()
+        for i, value in enumerate(self):
+            for _key, _value in self._index.items():
+                if value == _value:
+                    self._reverseIndex[i] = _key
+                    break
+        assert len(self._reverseIndex)  == len(self._index) == len(self)
+
+
+    def searchIndexFromKey(self, _key):
+        self._syncReverseIndex()
+        if _key not in self._index:
+            return None
+        return  self._reverseIndex.keys()[self._reverseIndex.values().index(_key)]
+
+    def popFromKey(self, _key):
+        index = self.searchIndexFromKey(_key)
+        if index is None:
+            return None
+        return self.pop(index)
+
+
+
+
+
+class IndexedListField(fields.ListField):
+    def get_default_value(self):
+        return KeyIndexedModelCollection(self)
+
+
 class BaseIdea(models.Base):
     title = fields.StringField(required=True)
     id = fields.IntField(required=False) #anyway it will be processed by ValidateIdList
     attr = fields.EmbeddedField(Attributes, required=False)
-    _ideas = fields.ListField(['BaseIdea']) #lazy loading for circular references, see doc
+    #_ideas = IndexedListField(['BaseIdea']) #lazy loading for circular references, see doc
+    _ideas = fields.ListField(['BaseIdea'])
+
+    def __init__(self, **kwargs):
+        super(BaseIdea, self).__init__(**kwargs)
 
     def __str__(self):
         return "[%s] %s " % (self.id if hasattr(self,'id') else '?', self.title)
@@ -128,6 +225,11 @@ class BaseIdea(models.Base):
             self.attr.style = Style()
         self.attr.style.background = color
 
+    # def appendIdea(self, idea, _key=None):
+    #     self._ideas.append(idea, _key)
+
+    def appendIdea(self, idea):
+        self._ideas.append(idea)
 
 class MindMupRootNode(BaseIdea):
     attr = fields.EmbeddedField(rootAttributes)
@@ -312,6 +414,14 @@ def dictToHtmlTable(aDict, caption="", tableProps = "border='1px solid black' 	b
     return html
 
 
+class BaseIdeaIndexed(BaseIdea):
+    """
+    Class (dict-like) for managing a node and its children (indexed by user-defined keys). T
+    he root node will be created if necessary.
+    """
+
+
+
 class sharedNodeManager(object):
     """
     Class (dict-like) for managing a node and its children (indexed by user-defined keys). T
@@ -324,7 +434,6 @@ class sharedNodeManager(object):
             rootNode = BaseIdea(**self.defaultNodeConstructor(rootKey))
         rootNode.populate(**kwargs)
         self.rootNode = rootNode
-        self.index = {}  # title, node
         if not rootKey is None:
             self.setNode(rootKey, rootNode)
 
@@ -335,7 +444,10 @@ class sharedNodeManager(object):
         return {'title': str(key),
                 'collapsed': True}
 
-    def getNode(self, key):
+    def __contains__(self, item):
+        return item in self.rootNode._ideas._index
+
+    def getNode(self, key, recursive = False):
         """
         Gets the node corresponding to key. If it doesn't exist, it is created and appended to the root node
         Args:
@@ -344,12 +456,17 @@ class sharedNodeManager(object):
         Returns: node
 
         """
-        node = self.index.get(key)
-        if not node:
+        nodeInd = self.rootNode._ideas.search(key)
+        if nodeInd:
+            return self.rootNode._ideas[nodeInd]
+        if recursive:
+            for i in self.rootNode._ideas:
+                nodeInd = i.rootNode._ideas.search(key)
+
+        if  nodeInd is  None:
             node = BaseIdea(**self.defaultNodeConstructor(key))
-            self.index[key] = node
-            self.rootNode._ideas.append(node)
-        return node
+            self.rootNode.appendIdea(node, _key = key)
+            return node
 
     def popNode(self, key, useDefault = False):
         """
@@ -361,16 +478,14 @@ class sharedNodeManager(object):
         Returns:
 
         """
-        node = self.index.pop(key, None)
-        if node and node is not self.rootNode:
-            self.getRootNode()._ideas.remove(node)
-        elif useDefault:
+        node = self.rootNode._ideas.popFromKey(key )
+        if not node  and useDefault:
             node = BaseIdea(**self.defaultNodeConstructor(key))
         return node
 
     def setNode(self, key, node):
-        self.index[key] = node
+        self.appendIdea(node, key)
 
-    def initializeKeys(self, keysIterable):
-        for k in keysIterable:
-            self.index[k] = None
+
+    def appendIdea(self, idea, _key=None):
+        return self.rootNode.appendIdea(idea,_key)
